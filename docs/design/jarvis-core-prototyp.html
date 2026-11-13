@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>J.A.R.V.I.S. – Kernkonzept (Design-Prototyp)</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden;
+    font-family: "Roboto Mono", ui-monospace, "SF Mono", Menlo, monospace; }
+  #stage { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; }
+  #phone { position: relative; height: 100%; aspect-ratio: 9 / 19.5; max-width: 100vw; background: #000; overflow: hidden; }
+  @media (min-aspect-ratio: 3/4) { #phone { height: 92vh; border-radius: 34px; box-shadow: 0 0 0 1px #17110a; } }
+  canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+
+  .txt { position: absolute; left: 0; right: 0; text-align: center; pointer-events: none; }
+  #status { top: 6.5%; font-size: 9px; letter-spacing: .42em; color: rgba(255,185,110,.38); transition: color .6s; }
+  #line { bottom: 23%; padding: 0 14%; font-size: 12.5px; line-height: 1.5; letter-spacing: .04em;
+    color: rgba(255,220,180,.72); opacity: 0; transition: opacity .7s; }
+
+  #mic { position: absolute; left: 50%; bottom: 8%; width: 54px; height: 54px; margin-left: -27px;
+    border-radius: 50%; border: 1px solid rgba(255,170,90,.28); background: transparent; cursor: pointer;
+    display: flex; align-items: center; justify-content: center; padding: 0;
+    transition: border-color .4s, box-shadow .4s; -webkit-tap-highlight-color: transparent; }
+  #mic svg { width: 18px; height: 18px; stroke: rgba(255,190,120,.75); transition: stroke .4s; }
+  #mic.on { border-color: rgba(255,190,110,.75); box-shadow: 0 0 22px rgba(255,150,60,.25); }
+
+  /* Nur für die Design-Abnahme – nicht Teil der App */
+  #dev { position: fixed; left: 50%; transform: translateX(-50%); top: 8px; display: flex; gap: 4px;
+    flex-wrap: nowrap; justify-content: center; opacity: .35; transition: opacity .3s; z-index: 10; }
+  #dev:hover { opacity: 1; }
+  #dev button { background: #0d0905; color: #c99a66; border: 1px solid #3a2a18; border-radius: 4px;
+    font-family: inherit; font-size: 9px; line-height: 1; letter-spacing: .08em; padding: 5px 6px; cursor: pointer; white-space: nowrap; }
+  #dev button.active { color: #ffd9a8; border-color: #b07a3c; }
+</style>
+</head>
+<body>
+<div id="stage">
+  <div id="phone">
+    <canvas id="p"></canvas>  <!-- Partikel mit Nachleuchten -->
+    <canvas id="h"></canvas>  <!-- HUD-Linien, jedes Frame neu -->
+    <div id="status" class="txt">STANDBY</div>
+    <div id="line" class="txt"></div>
+    <button id="mic" aria-label="Sprechen">
+      <svg viewBox="0 0 24 24" fill="none" stroke-width="1.3" stroke-linecap="round">
+        <rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"/>
+      </svg>
+    </button>
+  </div>
+</div>
+<div id="dev"></div>
+
+<script>
+const TAU = Math.PI * 2, rnd = Math.random;
+const phone = document.getElementById('phone');
+const cp = document.getElementById('p'), cpx = cp.getContext('2d');
+const ch = document.getElementById('h'), chx = ch.getContext('2d');
+const elStatus = document.getElementById('status'), elLine = document.getElementById('line');
+const elMic = document.getElementById('mic');
+
+let W, H, cx, cy, R;
+function resize() {
+  const r = phone.getBoundingClientRect(), d = Math.min(2, devicePixelRatio || 1);
+  W = r.width; H = r.height;
+  for (const c of [cp, ch]) { c.width = W * d; c.height = H * d; c.getContext('2d').setTransform(d, 0, 0, d, 0, 0); }
+  cx = W / 2; cy = H * 0.45; R = Math.min(W * 0.30, H * 0.18);
+  cpx.fillStyle = '#000'; cpx.fillRect(0, 0, W, H);
+  for (const p of all) p.px = null;
+}
+function gauss() { let u = 0, v = 0; while (!u) u = rnd(); while (!v) v = rnd(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(TAU * v); }
+
+/* ---------- Partikel ---------- */
+const shell = [], fil = [], dust = [], all = [];
+for (let i = 0; i < 1300; i++) {
+  const band = rnd() < 0.42;                       // ein Teil bildet ein geneigtes Band – wie in Referenz 1
+  shell.push({ lat: band ? gauss() * 0.07 : Math.asin(2 * rnd() - 1), lon: rnd() * TAU,
+    r: 1 + gauss() * 0.025, b: 0.3 + rnd() * 0.7, dash: rnd() < 0.14 ? 0.03 + rnd() * 0.12 : 0, px: null, py: null });
+}
+for (let k = 0; k < 7; k++) {                       // innere Filamente
+  const o = { ax: rnd() * TAU, ay: rnd() * Math.PI, r: 0.18 + rnd() * 0.5,
+    sp: (rnd() < .5 ? -1 : 1) * (0.35 + rnd() * 0.8), a0: rnd() * TAU, pts: [] };
+  for (let j = 0; j < 42; j++) o.pts.push({ a: rnd() * TAU * 0.55, jit: gauss() * 0.02, b: 0.4 + rnd() * 0.6, px: null, py: null });
+  fil.push(o);
+}
+for (let i = 0; i < 90; i++) dust.push({ a: rnd() * TAU, r: 1.35 + rnd() * 0.7, s: (rnd() - .5) * 0.04, b: rnd() });
+all.push(...shell, ...fil.flatMap(f => f.pts));
+
+function rot(x, y, z, ry, rx) {
+  const cy_ = Math.cos(ry), sy = Math.sin(ry), cx_ = Math.cos(rx), sx = Math.sin(rx);
+  const x1 = x * cy_ + z * sy, z1 = -x * sy + z * cy_;
+  return [x1, y * cx_ - z1 * sx, y * sx + z1 * cx_];
+}
+
+/* ---------- Zustände ---------- */
+const GOLD = [255, 168, 78], WHITEGOLD = [255, 226, 176], RED = [255, 72, 44];
+const S = {
+  IDLE:      { spin: .10, size: 1.00, glow: .55, fade: .20, inner: .35, wave: 0, pulse: 0, swirl: 0, sweep: 0, err: 0, col: GOLD },
+  LISTENING: { spin: .16, size: 1.04, glow: .85, fade: .22, inner: .5,  wave: 1, pulse: 0, swirl: 0, sweep: 0, err: 0, col: GOLD },
+  THINKING:  { spin: .55, size: .90,  glow: .80, fade: .09, inner: 2.4, wave: 0, pulse: 0, swirl: 1, sweep: 0, err: 0, col: GOLD },
+  SPEAKING:  { spin: .18, size: 1.00, glow: .95, fade: .20, inner: .7,  wave: 0, pulse: 1, swirl: 0, sweep: 0, err: 0, col: GOLD },
+  EXECUTING_ACTION: { spin: .25, size: .97, glow: .85, fade: .16, inner: 1, wave: 0, pulse: 0, swirl: .3, sweep: 1, err: 0, col: WHITEGOLD },
+  ERROR:     { spin: .03, size: .97,  glow: .32, fade: .26, inner: .15, wave: 0, pulse: 0, swirl: 0, sweep: 0, err: 1, col: RED },
+};
+const LABEL = { IDLE: 'STANDBY', LISTENING: 'HÖRE ZU', THINKING: 'ANALYSIERE', SPEAKING: 'ANTWORT',
+  EXECUTING_ACTION: 'FÜHRE AUS', ERROR: 'STÖRUNG' };
+const LINE = { IDLE: '', LISTENING: '„Weck mich morgen um sieben.“', THINKING: '',
+  EXECUTING_ACTION: 'Wecker · 07:00', SPEAKING: 'Erledigt. Ihr Wecker klingelt morgen um 7 Uhr.',
+  ERROR: 'Keine Verbindung zum Server.' };
+
+let state = 'IDLE', stateT = 0;
+const cur = JSON.parse(JSON.stringify(S.IDLE));
+function setState(s) {
+  state = s; stateT = 0;
+  elStatus.textContent = LABEL[s];
+  elStatus.style.color = s === 'ERROR' ? 'rgba(255,90,60,.6)' : 'rgba(255,185,110,.38)';
+  elLine.textContent = LINE[s]; elLine.style.opacity = LINE[s] ? 1 : 0;
+  elMic.classList.toggle('on', s === 'LISTENING');
+  document.querySelectorAll('#dev button').forEach(b => b.classList.toggle('active', b.dataset.s === s));
+}
+
+/* Demo-Ablauf über das Mikrofon */
+let flow = [];
+function runDemo() {
+  clearTimeout(flow.t);
+  flow = [['LISTENING', 2800], ['THINKING', 2200], ['EXECUTING_ACTION', 1700], ['SPEAKING', 3200], ['IDLE', 0]];
+  (function next() { const [s, d] = flow.shift(); setState(s); if (flow.length) flow.t = setTimeout(next, d); })();
+}
+elMic.onclick = () => { if (state === 'IDLE' || state === 'ERROR') runDemo(); else { clearTimeout(flow.t); flow = []; setState('IDLE'); } };
+
+const dev = document.getElementById('dev');
+Object.keys(S).forEach((s, i) => {
+  const b = document.createElement('button'); b.textContent = ['IDLE','LISTEN','THINK','SPEAK','EXEC','ERR'][i]; b.dataset.s = s;
+  b.onclick = () => { clearTimeout(flow.t); flow = []; setState(s); }; dev.appendChild(b);
+});
+const bd = document.createElement('button'); bd.textContent = '▶'; bd.onclick = runDemo; dev.appendChild(bd);
+addEventListener('keydown', e => { const k = +e.key; if (k >= 1 && k <= 6) dev.children[k - 1].click(); if (e.key === 'd') runDemo(); });
+
+/* ---------- Simulierte Signale (später: echter Mikrofonpegel / TTS) ---------- */
+let level = 0, env = 0;
+function signals(t) {
+  const l = Math.abs(Math.sin(t * 7.3) * Math.sin(t * 2.1 + 1)) * (0.55 + 0.45 * Math.sin(t * 0.9));
+  const word = Math.sin(t * 2.6) > -0.35 ? 1 : 0.1;
+  const e = Math.pow(Math.max(0, Math.sin(t * 11)), 2) * (0.55 + 0.45 * Math.sin(t * 1.7)) * word;
+  level += (l - level) * 0.25; env += (e - env) * 0.3;
+}
+
+/* ---------- Render ---------- */
+let rotY = 0, swirlPh = 0, hudRot = 0, last = performance.now(), T = 0;
+const mix = (a, b, k) => a + (b - a) * k;
+const rgba = (c, a) => `rgba(${c[0] | 0},${c[1] | 0},${c[2] | 0},${a.toFixed(3)})`;
+const NB = 6; const buckets = Array.from({ length: NB }, () => []);
+
+function frame(now) {
+  const dt = Math.min(0.05, (now - last) / 1000); last = now; T += dt; stateT += dt;
+  const tgt = S[state], k = 1 - Math.exp(-dt * 3.2);
+  for (const key in tgt) {
+    if (key === 'col') for (let i = 0; i < 3; i++) cur.col[i] = mix(cur.col[i], tgt.col[i], k);
+    else cur[key] = mix(cur[key], tgt[key], k);
+  }
+  signals(T);
+  rotY += dt * cur.spin; swirlPh += dt * cur.swirl * 1.4; hudRot += dt * (0.02 + cur.spin * 0.08);
+  const tilt = 1.12 + Math.sin(T * 0.21) * 0.07;  // Drehachse zeigt fast zum Betrachter → Wirbel statt Globus
+  const flick = cur.err > 0.05 ? (rnd() < 0.08 * cur.err ? 0.3 : 1) : 1;
+  const glow = cur.glow * flick;
+  const scale = R * cur.size * (1 + cur.pulse * env * 0.07 + cur.wave * level * 0.05);
+
+  /* Partikel-Ebene: Nachleuchten */
+  cpx.globalCompositeOperation = 'source-over';
+  cpx.fillStyle = `rgba(0,0,0,${cur.fade.toFixed(3)})`; cpx.fillRect(0, 0, W, H);
+  cpx.globalCompositeOperation = 'lighter';
+
+  // weicher Kernschein
+  const cr = R * (0.55 + cur.pulse * env * 0.35 + cur.inner * 0.04);
+  const g = cpx.createRadialGradient(cx, cy, 0, cx, cy, cr);
+  g.addColorStop(0, rgba(cur.col, 0.06 * glow + cur.pulse * env * 0.05)); g.addColorStop(1, 'rgba(0,0,0,0)');
+  cpx.fillStyle = g; cpx.beginPath(); cpx.arc(cx, cy, cr, 0, TAU); cpx.fill();
+
+  for (const b of buckets) b.length = 0;
+  const jitter = cur.err * 1.6;
+
+  const place = (p, x, y, z, a, sc) => {
+    let sx = x * sc, sy = y * sc;
+    if (cur.wave > 0.01) { const ang = Math.atan2(sy, sx); const m = 1 + cur.wave * level * 0.11 * Math.sin(ang * 5 + T * 6) * Math.sin(ang * 3 - T * 2.3); sx *= m; sy *= m; }
+    sx += cx + (jitter ? (rnd() - .5) * jitter : 0); sy += cy + (jitter ? (rnd() - .5) * jitter : 0);
+    if (p.px !== null) { const bi = Math.min(NB - 1, (a * NB) | 0); buckets[bi].push(p.px, p.py, sx, sy); }
+    p.px = sx; p.py = sy;
+  };
+
+  for (const p of shell) {
+    const lon = p.lon + swirlPh * (0.4 + Math.abs(p.lat) * 1.6);
+    const cl = Math.cos(p.lat), r = p.r;
+    const [x, y, z] = rot(cl * Math.cos(lon) * r, Math.sin(p.lat) * r, cl * Math.sin(lon) * r, rotY, tilt);
+    const depth = (z + 1) / 2;
+    const limb = Math.min(1, Math.hypot(x, y));     // Randbetonung: Inneres bleibt dunkel
+    const a = p.b * (0.3 + 0.7 * depth) * (0.12 + 0.88 * limb * limb * limb) * glow;
+    place(p, x, y, z, a, scale);
+    if (p.dash) {                                   // fragmentierte Leuchtspuren entlang der Oberfläche
+      const l2 = lon + p.dash, [x2, y2] = rot(cl * Math.cos(l2) * r, Math.sin(p.lat) * r, cl * Math.sin(l2) * r, rotY, tilt);
+      const bi = Math.min(NB - 1, (a * 0.8 * NB) | 0); buckets[bi].push(x * scale + cx, y * scale + cy, x2 * scale + cx, y2 * scale + cy);
+    }
+  }
+  const innerScale = R * cur.size * (1 + cur.pulse * env * 0.16);
+  for (const o of fil) {
+    o.a0 += dt * o.sp * cur.inner;
+    for (const p of o.pts) {
+      const a = o.a0 + p.a, rr = o.r + p.jit;
+      let [x, y, z] = rot(Math.cos(a) * rr, Math.sin(a) * rr, 0, o.ay, o.ax);
+      [x, y, z] = rot(x, y, z, rotY * 0.6, tilt);
+      place(p, x, y, z, Math.min(1, p.b * (0.5 + 0.5 * (z + 1) / 2) * glow * 1.15), innerScale);
+    }
+  }
+  const core = cur.col.map((v, i) => mix(v, [255, 244, 222][i], 0.45));
+  for (let i = 0; i < NB; i++) {
+    const seg = buckets[i]; if (!seg.length) continue;
+    const a = (i + 1) / NB;
+    cpx.strokeStyle = rgba(i >= NB - 2 ? core : cur.col, 0.12 + a * 0.75);
+    cpx.lineWidth = 0.7 + a * 0.9; cpx.lineCap = 'round';
+    cpx.beginPath();
+    for (let j = 0; j < seg.length; j += 4) { cpx.moveTo(seg[j], seg[j + 1]); cpx.lineTo(seg[j + 2], seg[j + 3]); }
+    cpx.stroke();
+  }
+
+  /* HUD-Ebene: wird jedes Frame neu gezeichnet, bewusst sparsam */
+  chx.clearRect(0, 0, W, H);
+  chx.globalCompositeOperation = 'lighter';
+  const hc = cur.col, hg = 0.6 + glow * 0.5;
+  const ring = (r, a, w, a0 = 0, a1 = TAU) => { chx.strokeStyle = rgba(hc, a * hg); chx.lineWidth = w; chx.beginPath(); chx.arc(cx, cy, r, a0, a1); chx.stroke(); };
+
+  // feiner Außenring (reagiert auf Mikrofonpegel)
+  ring(R * 1.24, 0.09 + cur.wave * level * 0.25, 0.6);
+  // Skala
+  chx.strokeStyle = rgba(hc, 0.13 * hg); chx.lineWidth = 0.6; chx.beginPath();
+  for (let i = 0; i < 144; i++) {
+    const an = hudRot + i / 144 * TAU, long = i % 12 === 0, r0 = R * 1.31, r1 = r0 + (long ? 7 : 2.5);
+    if (cur.err > 0.5 && rnd() < 0.15) continue;
+    chx.moveTo(cx + Math.cos(an) * r0, cy + Math.sin(an) * r0); chx.lineTo(cx + Math.cos(an) * r1, cy + Math.sin(an) * r1);
+  }
+  chx.stroke();
+  // drei gegenläufige Bogensegmente
+  for (let i = 0; i < 3; i++) { const a0 = -hudRot * 1.7 + i * TAU / 3; ring(R * 1.42, 0.2, 0.8, a0, a0 + 0.55 - i * 0.12); }
+  // Denken: schneller Scanner-Bogen
+  if (cur.swirl > 0.05) { const a0 = T * 3.2; ring(R * 1.16, 0.55 * cur.swirl, 1.1, a0, a0 + 0.9); ring(R * 1.16, 0.25 * cur.swirl, 1.1, a0 + Math.PI, a0 + Math.PI + 0.4); }
+  // Aktion: Fortschritts-Sweep
+  if (cur.sweep > 0.05) {
+    const prog = Math.min(1, stateT / 1.5), a0 = -Math.PI / 2, a1 = a0 + prog * TAU;
+    ring(R * 1.24, 0.75 * cur.sweep, 1.4, a0, a1);
+    chx.fillStyle = rgba([255, 245, 225], 0.9 * cur.sweep); chx.beginPath();
+    chx.arc(cx + Math.cos(a1) * R * 1.24, cy + Math.sin(a1) * R * 1.24, 2, 0, TAU); chx.fill();
+  }
+  // Staub
+  for (const d of dust) {
+    d.a += d.s * dt * (1 + cur.spin * 4);
+    chx.fillStyle = rgba(hc, (0.05 + d.b * 0.12) * hg);
+    chx.fillRect(cx + Math.cos(d.a) * R * d.r, cy + Math.sin(d.a) * R * d.r * 0.98, 1.1, 1.1);
+  }
+  // Name im Zentrum
+  chx.globalCompositeOperation = 'source-over';
+  const name = 'J.A.R.V.I.S.', fs = Math.max(10, R * 0.075), sp = fs * 0.55;
+  chx.font = `300 ${fs}px "Roboto Mono", ui-monospace, monospace`; chx.textBaseline = 'middle'; chx.textAlign = 'center';
+  const tw = name.length * sp;
+  chx.fillStyle = rgba([255, 228, 190], (0.62 - cur.swirl * 0.25 + cur.pulse * env * 0.3) * (cur.err ? flick : 1));
+  for (let i = 0; i < name.length; i++) chx.fillText(name[i], cx - tw / 2 + sp * (i + 0.5), cy);
+
+  requestAnimationFrame(frame);
+}
+addEventListener('resize', resize);
+resize(); setState('IDLE'); requestAnimationFrame(frame);
+</script>
+</body>
+</html>
